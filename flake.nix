@@ -21,8 +21,6 @@
               modules = [
                 {
                   languages.haskell.enable = true;
-                  # https://devenv.sh/reference/options/
-                  packages = [ ];
                 }
               ];
             };

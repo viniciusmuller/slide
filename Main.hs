@@ -20,6 +20,7 @@ data SExpr
   deriving (Show)
 
 lexer = T.makeTokenParser haskellDef
+
 lexeme = T.lexeme lexer
 
 -- TODO: parse floats
@@ -79,7 +80,8 @@ main = do
   case parse mainParser "" contents of
     Left err -> print err
     Right exprs ->
-      putStrLn $ intercalate "\n\n" $ formatSExpr <$> exprs
+      putStrLn "This is the parsed and formatted code:\n"
+        >> putStrLn (intercalate "\n\n" $ formatSExpr <$> exprs)
 
 formatSExpr :: SExpr -> String
 formatSExpr exprs = doFormatSExpr exprs 0
