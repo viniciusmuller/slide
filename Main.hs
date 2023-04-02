@@ -16,8 +16,8 @@ import Data.Char (ord)
 type Parser t = String -> Maybe (t, String)
 
 data LiteralType
-  = String String
-  | Number Int
+  = Str String
+  | Integer Int
   | Float Float
   deriving (Show)
 
@@ -27,10 +27,10 @@ data SExpr
   | Expr [SExpr]
   deriving (Show)
 
-{-- 
+{--
 
-(define foo x 
-  ((+ x 2))) 
+(define foo x
+  ((+ x 2)))
 
 --}
 
@@ -39,11 +39,11 @@ sexpr =
     [ Identifier "define",
       Identifier "foo",
       Identifier "x",
-      Expr [Identifier "+", Identifier "x", Literal (Number 2)]
+      Expr [Identifier "+", Identifier "x", Literal (Integer 2)]
     ]
 
-alt :: Parser a -> Parser a -> Parser a
-alt p1 p2 text = do
+pOr :: Parser a -> Parser a -> Parser a
+pOr p1 p2 text = do
   case p1 text of
     Just res -> Just res
     Nothing -> p2 text
@@ -56,13 +56,22 @@ digit (c : rest) =
   where
     n = ord c
 
--- TODO: do this
--- [2, 0, 1] -> 201
 digitsToNumber :: [Int] -> Int
-digitsToNumber digits = foldl (b -> a -> b) 0 digits
+digitsToNumber digits =
+  fst $
+    foldl
+      (\(total, pow) n -> (total + n * pow, pow * 10))
+      (0, 1)
+      (reverse digits)
 
--- number :: Parser LiteralType
--- number = pmany digit >>= 
+-- TODO: implement Functor fmap
+pmap :: Parser a -> (a -> b) -> Parser b
+pmap p1 f text = p1 text >>= \(a, rest) -> Just (f a, rest)
+
+integer :: Parser LiteralType
+integer text =
+  pmany digit text
+    >>= (\(digits, rest) -> Just (Integer (digitsToNumber digits), rest))
 
 char :: Char -> Parser Char
 char tc (c : rest) = if tc == c then Just (c, rest) else Nothing
@@ -76,14 +85,16 @@ asciiChar (c : rest) = if validAscii then Just (c, rest) else Nothing
     validAscii = n >= 65 && n <= 90 || n >= 97 && n <= 122
 
 -- TODO: test if this is working
-string :: Parser String
-string = pmany (between '"' '"' asciiChar) -- TODO: add support for all characters
-
-literal :: Parser LiteralType
-literal = alt digit (alt identifier string)
+string :: Parser LiteralType
+-- TODO: add support for all characters (dont use asciiChar)
+string = pmap (pmany (between '"' '"' asciiChar)) Str
 
 exprLiteral :: Parser SExpr
-exprLiteral = undefined
+exprLiteral =
+  identifier
+    `pOr` pmap string Literal
+    `pOr` pmap integer Literal
+    `pOr` between '(' ')' (pmap (pmany exprLiteral) Expr)
 
 identifier :: Parser SExpr
 identifier msg =
