@@ -1,5 +1,5 @@
-import Data.Char (digitToInt, ord)
-import Data.List (foldl', intercalate, intersperse)
+import Data.Char (digitToInt, isAlpha, isAlphaNum, ord)
+import Data.List (foldl', intercalate)
 import System.IO
 import Text.Parsec
 import Text.Parsec.Language (haskellDef)
@@ -19,39 +19,42 @@ data SExpr
   | Exprs [SExpr]
   deriving (Show)
 
+-- TODO: create simple interpreter based on LC
+
 lexer = T.makeTokenParser haskellDef
 
 lexeme = T.lexeme lexer
 
--- TODO: parse floats
+number = many1 digit
 
-number :: Parser SExpr
-number = do
-  x <- positiveNatural
-  return (Literal . Integer $ x)
+plus = char '+' *> number
 
--- TODO: parse numbers correctly
-positiveNatural =
-  foldl' (\a i -> a * 10 + digitToInt i) 0 <$> many1 digit
+minus = (:) <$> char '-' <*> number
 
-mystring :: Parser SExpr
-mystring = do
+int = plus <|> minus <|> number
+
+-- TODO: Float support
+
+integer :: Parser SExpr
+integer = Literal . Integer . rd <$> int
+  where
+    rd = read :: String -> Int
+
+str :: Parser SExpr
+str = do
   char '"'
-  content <- many (satisfy validAscii) -- TODO: support all characters
+  content <- many validStringChar
   char '"'
   return (Literal . Str $ content)
 
 identifier :: Parser SExpr
 identifier = do
-  c <- satisfy validAscii
-  rest <- many (satisfy validAscii)
+  c <- satisfy isAlpha
+  rest <- many $ satisfy isAlphaNum
   return (Identifier $ c : rest)
 
--- TODO: support also non-ascii characters
-validAscii c = validAscii
-  where
-    n = ord c
-    validAscii = n >= 65 && n <= 90 || n >= 97 && n <= 122
+validStringChar :: Parser Char
+validStringChar = satisfy (/= '"')
 
 comment :: Parser ()
 comment = do
@@ -62,9 +65,9 @@ comment = do
 
 expr :: Parser SExpr
 expr = do
-  optional $ lexeme comment
+  optional $ many (lexeme comment)
   lexeme (char '(')
-  res <- many . lexeme $ number <|> mystring <|> identifier <|> expr
+  res <- many . lexeme $ integer <|> str <|> identifier <|> expr
   lexeme (char ')')
   return (Exprs res)
 
@@ -89,7 +92,7 @@ formatSExpr exprs = doFormatSExpr exprs 0
 doFormatSExpr :: SExpr -> Int -> String
 doFormatSExpr (Literal l) _ = case l of
   Integer i -> Text.printf "%d" i
-  Float f -> Text.printf "\"%2.f\"" f
+  Float f -> Text.printf "%.2f" f
   Str s -> Text.printf "\"%s\"" s
 doFormatSExpr (Identifier l) _ = l
 doFormatSExpr (Exprs exprs) n =

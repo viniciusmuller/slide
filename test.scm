@@ -1,7 +1,6 @@
-{ TODO: support operators (such as +) }
-
 (define foo x
-  (plus x 2 "juno"))
+  { TODO: Support floats }
+  (plus x "juno()" -343 a -322))
 
 (define print x 
   (defn 
