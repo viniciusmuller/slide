@@ -1,19 +1,11 @@
--- import Control.Applicative
-import Data.Char (ord)
-
--- type alias
--- newtype Parser t = Parser
---   { runParser :: String -> Maybe (t, String)
---   }
-
--- instance Functor Parser where
---   fmap f a = undefined
-
--- instance Applicative Parser where
---   pure = Parser {runParser= const Nothing}
---   a <*> b = Parser {runParser= const Nothing}
-
-type Parser t = String -> Maybe (t, String)
+import Data.Char (digitToInt, ord)
+import Data.List (foldl', intercalate, intersperse)
+import System.IO
+import Text.Parsec
+import Text.Parsec.Language (haskellDef)
+import Text.Parsec.String (Parser)
+import qualified Text.Parsec.Token as T
+import qualified Text.Printf as Text
 
 data LiteralType
   = Str String
@@ -24,103 +16,84 @@ data LiteralType
 data SExpr
   = Literal LiteralType
   | Identifier String
-  | Expr [SExpr]
+  | Exprs [SExpr]
   deriving (Show)
 
-{--
+lexer = T.makeTokenParser haskellDef
+lexeme = T.lexeme lexer
 
-(define foo x
-  ((+ x 2)))
+-- TODO: parse floats
 
---}
+number :: Parser SExpr
+number = do
+  x <- positiveNatural
+  return (Literal . Integer $ x)
 
-sexpr =
-  Expr
-    [ Identifier "define",
-      Identifier "foo",
-      Identifier "x",
-      Expr [Identifier "+", Identifier "x", Literal (Integer 2)]
-    ]
+-- TODO: parse numbers correctly
+positiveNatural =
+  foldl' (\a i -> a * 10 + digitToInt i) 0 <$> many1 digit
 
-pOr :: Parser a -> Parser a -> Parser a
-pOr p1 p2 text = do
-  case p1 text of
-    Just res -> Just res
-    Nothing -> p2 text
+mystring :: Parser SExpr
+mystring = do
+  char '"'
+  content <- many (satisfy validAscii) -- TODO: support all characters
+  char '"'
+  return (Literal . Str $ content)
 
-digit "" = Nothing
-digit (c : rest) =
-  if n >= 48 && n <= 57
-    then Just (n - 48, rest)
-    else Nothing
-  where
-    n = ord c
+identifier :: Parser SExpr
+identifier = do
+  c <- satisfy validAscii
+  rest <- many (satisfy validAscii)
+  return (Identifier $ c : rest)
 
-digitsToNumber :: [Int] -> Int
-digitsToNumber digits =
-  fst $
-    foldl
-      (\(total, pow) n -> (total + n * pow, pow * 10))
-      (0, 1)
-      (reverse digits)
-
--- TODO: implement Functor fmap
-pmap :: Parser a -> (a -> b) -> Parser b
-pmap p1 f text = p1 text >>= \(a, rest) -> Just (f a, rest)
-
-integer :: Parser LiteralType
-integer text =
-  pmany digit text
-    >>= (\(digits, rest) -> Just (Integer (digitsToNumber digits), rest))
-
-char :: Char -> Parser Char
-char tc (c : rest) = if tc == c then Just (c, rest) else Nothing
-char tc "" = Nothing
-
-asciiChar :: Parser Char
-asciiChar "" = Nothing
-asciiChar (c : rest) = if validAscii then Just (c, rest) else Nothing
+-- TODO: support also non-ascii characters
+validAscii c = validAscii
   where
     n = ord c
     validAscii = n >= 65 && n <= 90 || n >= 97 && n <= 122
 
--- TODO: test if this is working
-string :: Parser LiteralType
--- TODO: add support for all characters (dont use asciiChar)
-string = pmap (pmany (between '"' '"' asciiChar)) Str
+comment :: Parser ()
+comment = do
+  char '{'
+  many (noneOf "}")
+  char '}'
+  return ()
 
-exprLiteral :: Parser SExpr
-exprLiteral =
-  identifier
-    `pOr` pmap string Literal
-    `pOr` pmap integer Literal
-    `pOr` between '(' ')' (pmap (pmany exprLiteral) Expr)
+expr :: Parser SExpr
+expr = do
+  optional $ lexeme comment
+  lexeme (char '(')
+  res <- many . lexeme $ number <|> mystring <|> identifier <|> expr
+  lexeme (char ')')
+  return (Exprs res)
 
-identifier :: Parser SExpr
-identifier msg =
-  pmany asciiChar msg
-    >>= \(ident, rest) -> Just (Identifier ident, rest)
+mainParser :: Parser [SExpr]
+mainParser = do
+  r <- many expr
+  eof
+  return r
 
-pmany :: Parser t -> Parser [t]
-pmany p msg = do
-  (res, rest) <- p msg
-  parseMany2 p ([res], rest)
+main = do
+  handle <- openFile "test.scm" ReadMode
+  contents <- hGetContents handle
+  case parse mainParser "" contents of
+    Left err -> print err
+    Right exprs ->
+      putStrLn $ intercalate "\n\n" $ formatSExpr <$> exprs
 
-parseMany2 :: Parser t -> ([t], String) -> Maybe ([t], String)
-parseMany2 p (acc, msg) =
-  case p msg of
-    Just (res, rest) -> parseMany2 p (res : acc, rest)
-    Nothing -> Just (reverse acc, msg)
+formatSExpr :: SExpr -> String
+formatSExpr exprs = doFormatSExpr exprs 0
 
-between :: Char -> Char -> Parser t -> Parser t
-between fdigit ldigit p text = do
-  (_, rest) <- char fdigit text
-  (result, rest) <- p rest
-  (_, _) <- char ldigit rest
-  return (result, take (length rest - 1) rest)
-
-parseExpr :: Parser SExpr
-parseExpr = between '(' ')' identifier
-
-main :: IO ()
-main = putStrLn "Hello!"
+doFormatSExpr :: SExpr -> Int -> String
+doFormatSExpr (Literal l) _ = case l of
+  Integer i -> Text.printf "%d" i
+  Float f -> Text.printf "\"%2.f\"" f
+  Str s -> Text.printf "\"%s\"" s
+doFormatSExpr (Identifier l) _ = l
+doFormatSExpr (Exprs exprs) n =
+  if n == 0
+    then Text.printf "(%s)" $ unwords (map mapper exprs)
+    else Text.printf "\n%s(%s)" nTabs $ unwords (map mapper exprs)
+  where
+    nTabs = replicate (n * 2) ' '
+    mapper expr = doFormatSExpr expr (n + 1)
